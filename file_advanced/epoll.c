@@ -27,8 +27,8 @@ int main(int argc, char** argv) {
     char buf[1024];
     int ret;
     struct inotify_event* event;
-    fd_set fds;
-    struct timeval timeout;
+    int epfd = -1;
+    struct epoll_event ep_event;
 
     fd = inotify_init();
     if (fd == -1) {
@@ -47,24 +47,43 @@ int main(int argc, char** argv) {
 	goto err;
     }
 
+    //epoll instance 생성
+    epfd = epoll_create1(0);
+    if (epfd == -1) {
+	printf("epoll_create1() fail\n");
+	goto err;
+    }
+
+    //감시를 하겠다고 등록
+    memset(&ep_event, 0, sizeof(ep_event));
+    ep_event.events = EPOLLIN; //마스크로 설정할 이벤트 설정
+    ep_event.data.fd = fd; //감시할 대상 등록
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ep_event) == -1) {
+	printf("epoll_ctl() fail\n");
+	goto err;
+    }
+
+    memset(&ep_event, 0, sizeof(ep_event));
+    ep_event.events = EPOLLIN; //마스크로 설정할 이벤트 설정
+    ep_event.data.fd = STDIN_FILENO; //감시할 대상 등록
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, STDIN_FILENO, &ep_event) == -1) {
+	printf("epoll_ctl() fail\n");
+	goto err;
+    }
+
     while (1) {
-	FD_ZERO(&fds); //fds 초기화
-	FD_SET(fd, &fds); //fds에 fd 등록
-	FD_SET(STDIN_FILENO, &fds); //stdin fd 등록
 
-	timeout.tv_sec = 5;
-	timeout.tv_usec = 0;
+	memset(&ep_event, 0, sizeof(ep_event));
+	ret = epoll_wait(epfd, &ep_event, 1, 5000);
 
-	ret = select(fd > STDIN_FILENO ? fd + 1 : STDIN_FILENO + 1, &fds, NULL, NULL, &timeout);
 	if (ret == -1) {
 	    goto err;
 	}
 	else if (ret == 0) {
-	    printf("select() timeout occur!!\n");
-	    goto err;
+	    printf("epoll_wait() timeout occur!!\n");
 	}
 	else if (ret > 0) { //이벤트 발생
-	    if (FD_ISSET(fd, &fds)) { //fd에 이벤트 발생
+	    if (ep_event.data.fd == fd) { //fd에 이벤트 발생
 		ret = read(fd, buf, sizeof(buf));
 		if (ret == -1) {
 		    printf("read() fail\n");
@@ -82,7 +101,7 @@ int main(int argc, char** argv) {
 		    ret -= (sizeof(struct inotify_event) + event->len);
 		}
 	    }
-	    else if(FD_ISSET(STDIN_FILENO, &fds)) { //stdin에 이벤트 발생
+	    else if(ep_event.data.fd == STDIN_FILENO) { //stdin에 이벤트 발생
 		memset(buf, 0, sizeof(buf));
 		ret = read(STDIN_FILENO, buf, sizeof(buf));
 		if (ret == -1) {
@@ -93,6 +112,7 @@ int main(int argc, char** argv) {
 	    }
 	}
     }
+    close(epfd);
     close(fd);
     close(wd1);
     close(wd2);
@@ -108,6 +128,9 @@ err:
     }
     if (wd2 >= 0) {
 	close(wd2);
+    }
+    if (epfd >= 0) {
+	close(epfd);
     }
 
     return -1;

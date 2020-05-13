@@ -60,7 +60,6 @@ int main(int argc, char** argv) {
 	}
 	else if (ret == 0) {
 	    printf("select() timeout occur!!\n");
-	    goto err;
 	}
 	else if (ret > 0) { //이벤트 발생
 	    if (FD_ISSET(fd, &fds)) { //fd에 이벤트 발생
